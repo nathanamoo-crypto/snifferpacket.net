@@ -1,26 +1,44 @@
 #include <iostream>
 #include <winsock2.h>
 //access to the Windows Sockets API—specifically version 2, which is the modern standard
+#include <ws2tcpip.h>
+#include <windows.h>
+#include <csignal>
+// for signal handling
 #pragma comment(lib, "ws2_32.lib")
 /*link your program with the ws2_32.lib library which contains all the networking
 functions like socket(), bind(), recv(), WSAStartup(), etc.
  Without linking it, your program would compile but fail to link, because the linker wouldn’t
  know where to find the actual implementations of those functions.
 */
-// IP header structure (simplified)
+// IP header structure
 struct iphdr {
-    unsigned char ihl : 4;//Needed to calculate where the IP header ends and where the payload (e.g., TCP/UDP) begins
-    unsigned char version : 4;//To confirm it's IPv4 (usually always 4)
-    unsigned char protocol;//tells you if it’s TCP, UDP, ICMP, etc
-    unsigned int saddr;//Source IP — very useful for identifying sender
-    unsigned int daddr;//Destination IP — very useful for identifying receiver
+    unsigned char ihl : 4; //Needed to calculate where the IP header ends and where the payload (e.g., TCP/UDP) begins
+    unsigned char version : 4; //To confirm it's IPv4 (usually always 4)
+    unsigned char tos;
+    unsigned short tot_len;
+    unsigned short id;
+    unsigned short frag_off;
+    unsigned char ttl;
+    unsigned char protocol; //tells you if it’s TCP, UDP, ICMP, etc
+    unsigned short check;
+    unsigned int saddr; //Source IP — very useful for identifying sender
+    unsigned int daddr; //Destination IP — very useful for identifying receiver
 };
+
+bool running = true;
+void signalHandler(int signum) {
+    running = false;
+}
 
 int main() {
     WSADATA wsaData; //stores info about the WinSock version.
     SOCKET sock; //the raw socket we'll use to capture packets.
     char buffer[65536]; //where incoming packet data will be stored. Large enough to hold most packets
     int bytesReceived = 0; //how many bytes we got from each packet.
+
+    // Handle Ctrl+C gracefully
+    signal(SIGINT, signalHandler);
 
     // Step 1: Start WinSock
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
@@ -96,10 +114,10 @@ If enabling promiscuous mode fails:
   . Exit with error code 1
 */
     // Step 5: Receive packets
-    std::cout << "Listening for packets..." << std::endl;
+    std::cout << "Listening for packets...(press Ctrl+C to stop)" << std::endl;
 
     // Infinite loop: continuously capture packets
-    while (true) {
+    while (running) {
         // Receive raw packet data into buffer
         bytesReceived = recv(sock, buffer, sizeof(buffer), 0);
 
@@ -112,7 +130,9 @@ If enabling promiscuous mode fails:
              * Ethernet headers contain MAC addresses and other link-layer info,
              * but we're interested in the IP layer, which starts after that.
              */
-            iphdr* ip = (iphdr*)(buffer + 14);
+            iphdr* ip = (iphdr*)buffer; // 
+
+
 
             /*
              * Read the protocol field from the IP header.
@@ -137,12 +157,19 @@ If enabling promiscuous mode fails:
                     std::cout << "Other (" << (int)ip->protocol << ")" << std::endl;
                     break;
             }
+            
+         //Outputing the source nad destination IP
+         in_addr src, dest;
+            src.s_addr = ip->saddr;
+            dest.s_addr = ip->daddr;
+            std::cout << "From: " << inet_ntoa(src) << ", To: " << inet_ntoa(dest) << std::endl;
 
             // add a separator for readability
             std::cout << "-----------------------------" << std::endl;
         }
     }
     // Step 6: Cleanup
+    std::cout << "Stopping packet capture and cleaning up." << std::endl;
     closesocket(sock);
     WSACleanup();
     return 0;
